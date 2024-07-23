@@ -3,62 +3,131 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Erweitertes 3D-Web-Spiel</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>GTA-inspiriertes 3D-Web-Spiel mit KI</title>
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
         #gameContainer { width: 100%; height: 100vh; }
-        #joystick { position: absolute; bottom: 20px; left: 20px; width: 100px; height: 100px; background: rgba(255,255,255,0.5); border-radius: 50%; }
-        #instructions { position: absolute; top: 10px; left: 10px; color: white; font-family: Arial, sans-serif; }
+        #controls { position: absolute; bottom: 20px; left: 20px; right: 20px; display: flex; justify-content: space-between; }
+        .control-btn { width: 60px; height: 60px; background: rgba(255,255,255,0.5); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 24px; user-select: none; }
+        #instructions { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
+        #score { position: absolute; top: 10px; right: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <div id="gameContainer"></div>
-    <div id="joystick"></div>
-    <div id="instructions">
-        Desktop: WASD zum Bewegen, SHIFT zum Rennen<br>
-        Mobil: Joystick zum Bewegen, Doppeltipp zum Rennen
+    <div id="controls">
+        <div id="moveControls">
+            <div class="control-btn" id="upBtn">W</div>
+            <div class="control-btn" id="leftBtn">A</div>
+            <div class="control-btn" id="downBtn">S</div>
+            <div class="control-btn" id="rightBtn">D</div>
+        </div>
+        <div id="actionControls">
+            <div class="control-btn" id="actionBtn">Space</div>
+        </div>
     </div>
+    <div id="instructions">
+        Desktop: W vorwärts, S rückwärts, A links, D rechts, Leertaste für Aktion<br>
+        Mobil: WASD-Tasten zum Bewegen, Space für Aktion
+    </div>
+    <div id="score">Punkte: <span id="scoreValue">0</span></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.9.0/nipplejs.min.js"></script>
     <script>
-        let scene, camera, renderer;
-        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isRunning = false;
+        let scene, camera, renderer, player;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
         let velocity = new THREE.Vector3();
-        let buildings = [];
+        let buildings = [], collectibles = [], npcCars = [], trafficLights = [];
+        let score = 0;
 
         function init() {
             scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 5);
             
-            renderer = new THREE.WebGLRenderer();
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.getElementById('gameContainer').appendChild(renderer.domElement);
 
-            const light = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(light);
-
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-            directionalLight.position.set(0, 1, 0);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(100, 100, 100);
             scene.add(directionalLight);
 
-            // Boden
+            createPlayerCar();
+            camera.position.set(0, 20, -20);
+            camera.lookAt(player.position);
+
+            createGround();
+
+            for (let i = 0; i < 50; i++) {
+                createRandomBuilding();
+                createRandomCollectible();
+            }
+
+            createRoads();
+            createNPCCars(10);
+            createTrafficLights();
+
+            setupControls();
+            animate();
+        }
+
+        function createPlayerCar() {
+            player = createCarModel(0xff0000);
+            player.position.set(0, 0.5, 0);
+            scene.add(player);
+        }
+
+        function createCarModel(color) {
+            const carGroup = new THREE.Group();
+
+            const carBody = new THREE.Mesh(
+                new THREE.BoxGeometry(2, 1, 4),
+                new THREE.MeshPhongMaterial({color: color})
+            );
+            carGroup.add(carBody);
+
+            const wheelGeometry = new THREE.CylinderGeometry(0.5, 0.5, 0.2, 32);
+            const wheelMaterial = new THREE.MeshPhongMaterial({color: 0x333333});
+            const wheelPositions = [
+                [-1, -0.5, 1.5], [1, -0.5, 1.5],
+                [-1, -0.5, -1.5], [1, -0.5, -1.5]
+            ];
+            wheelPositions.forEach(position => {
+                const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                wheel.position.set(...position);
+                wheel.rotation.z = Math.PI / 2;
+                carGroup.add(wheel);
+            });
+
+            const windshield = new THREE.Mesh(
+                new THREE.PlaneGeometry(1.8, 1),
+                new THREE.MeshPhongMaterial({color: 0x87CEFA, transparent: true, opacity: 0.7})
+            );
+            windshield.position.set(0, 0.5, 0.5);
+            windshield.rotation.x = Math.PI / 2.5;
+            carGroup.add(windshield);
+
+            return carGroup;
+        }
+
+        function createGround() {
+            const textureLoader = new THREE.TextureLoader();
+            const texture = textureLoader.load('https://thumbs.dreamstime.com/b/seamless-asphalt-texture-roadway-34042941.jpg');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(100, 100);
+
             const planeGeometry = new THREE.PlaneGeometry(1000, 1000);
-            const planeMaterial = new THREE.MeshBasicMaterial({color: 0x555555, side: THREE.DoubleSide});
+            const planeMaterial = new THREE.MeshPhongMaterial({map: texture, side: THREE.DoubleSide});
             const plane = new THREE.Mesh(planeGeometry, planeMaterial);
             plane.rotation.x = Math.PI / 2;
             plane.position.y = 0;
             scene.add(plane);
-
-            // Zufällige Gebäude generieren
-            for (let i = 0; i < 100; i++) {
-                createRandomBuilding();
-            }
-
-            setupJoystick();
-            setupKeyboardControls();
-            animate();
         }
 
         function createRandomBuilding() {
@@ -74,48 +143,128 @@
             building.position.y = height / 2;
             building.position.z = Math.random() * 1000 - 500;
             
+            const windowGeometry = new THREE.PlaneGeometry(0.5, 0.5);
+            const windowMaterial = new THREE.MeshPhongMaterial({color: 0x87CEFA, transparent: true, opacity: 0.7});
+            for (let i = 0; i < 5; i++) {
+                for (let j = 0; j < 3; j++) {
+                    const windowMesh = new THREE.Mesh(windowGeometry, windowMaterial);
+                    windowMesh.position.set(
+                        (Math.random() - 0.5) * width,
+                        (Math.random() * 0.6 + 0.2) * height,
+                        depth / 2 + 0.01
+                    );
+                    building.add(windowMesh);
+                }
+            }
+            
             scene.add(building);
             buildings.push(building);
         }
 
-        function setupJoystick() {
-            const joystick = nipplejs.create({
-                zone: document.getElementById('joystick'),
-                mode: 'static',
-                position: {left: '60px', bottom: '60px'},
-                color: 'blue'
-            });
+        function createRandomCollectible() {
+            const geometry = new THREE.OctahedronGeometry(0.5);
+            const material = new THREE.MeshPhongMaterial({color: 0xFFD700, shininess: 100});
+            const collectible = new THREE.Mesh(geometry, material);
+            
+            collectible.position.x = Math.random() * 1000 - 500;
+            collectible.position.y = 1;
+            collectible.position.z = Math.random() * 1000 - 500;
+            
+            scene.add(collectible);
+            collectibles.push(collectible);
+        }
 
-            joystick.on('move', function(evt, data) {
-                const force = data.force < 1 ? data.force : 1;
-                const angle = data.angle.radian;
-                moveForward = Math.cos(angle) > 0.3;
-                moveBackward = Math.cos(angle) < -0.3;
-                moveLeft = Math.sin(angle) < -0.3;
-                moveRight = Math.sin(angle) > 0.3;
-                velocity.z = -Math.cos(angle) * force * (isRunning ? 0.2 : 0.1);
-                velocity.x = Math.sin(angle) * force * (isRunning ? 0.2 : 0.1);
-            });
+        function createRoads() {
+            const roadGeometry = new THREE.PlaneGeometry(10, 1000);
+            const roadMaterial = new THREE.MeshPhongMaterial({color: 0x333333});
+            
+            for (let i = -5; i <= 5; i++) {
+                const horizontalRoad = new THREE.Mesh(roadGeometry, roadMaterial);
+                horizontalRoad.position.set(i * 100, 0.01, 0);
+                horizontalRoad.rotation.x = -Math.PI / 2;
+                scene.add(horizontalRoad);
 
-            joystick.on('end', function() {
-                moveForward = moveBackward = moveLeft = moveRight = false;
-                velocity.set(0, 0, 0);
-            });
+                const verticalRoad = new THREE.Mesh(roadGeometry, roadMaterial);
+                verticalRoad.position.set(0, 0.01, i * 100);
+                verticalRoad.rotation.x = -Math.PI / 2;
+                verticalRoad.rotation.z = Math.PI / 2;
+                scene.add(verticalRoad);
+            }
+        }
 
-            let lastTap = 0;
-            document.addEventListener('touchend', function(event) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastTap;
-                if (tapLength < 500 && tapLength > 0) {
-                    isRunning = !isRunning;
-                }
-                lastTap = currentTime;
+        function createNPCCars(count) {
+            for (let i = 0; i < count; i++) {
+                const npcCar = createCarModel(0x00ff00);  // Grüne NPC-Autos
+                npcCar.position.set(
+                    Math.random() * 1000 - 500,
+                    0.5,
+                    Math.random() * 1000 - 500
+                );
+                scene.add(npcCar);
+                npcCars.push(npcCar);
+            }
+        }
+
+        function createTrafficLights() {
+            const intersections = [
+                {x: 0, z: 0},
+                {x: 100, z: 100},
+                {x: -100, z: -100},
+                {x: 100, z: -100},
+                {x: -100, z: 100}
+            ];
+
+            intersections.forEach(intersection => {
+                const trafficLight = createTrafficLightModel();
+                trafficLight.position.set(intersection.x, 5, intersection.z);
+                scene.add(trafficLight);
+                trafficLights.push(trafficLight);
             });
         }
 
-        function setupKeyboardControls() {
+        function createTrafficLightModel() {
+            const trafficLightGroup = new THREE.Group();
+
+            const pole = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.2, 0.2, 10),
+                new THREE.MeshPhongMaterial({color: 0x333333})
+            );
+            pole.position.y = 5;
+            trafficLightGroup.add(pole);
+
+            const lightBox = new THREE.Mesh(
+                new THREE.BoxGeometry(1, 3, 1),
+                new THREE.MeshPhongMaterial({color: 0x333333})
+            );
+            lightBox.position.y = 11.5;
+            trafficLightGroup.add(lightBox);
+
+            const lightColors = [0xff0000, 0xffff00, 0x00ff00];
+            lightColors.forEach((color, index) => {
+                const light = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.4),
+                    new THREE.MeshPhongMaterial({color: color})
+                );
+                light.position.set(0, 12.5 - index, 0.5);
+                trafficLightGroup.add(light);
+            });
+
+            return trafficLightGroup;
+        }
+
+        function setupControls() {
             document.addEventListener('keydown', onKeyDown, false);
             document.addEventListener('keyup', onKeyUp, false);
+
+            document.getElementById('upBtn').addEventListener('touchstart', () => moveForward = true);
+            document.getElementById('upBtn').addEventListener('touchend', () => moveForward = false);
+            document.getElementById('downBtn').addEventListener('touchstart', () => moveBackward = true);
+            document.getElementById('downBtn').addEventListener('touchend', () => moveBackward = false);
+            document.getElementById('leftBtn').addEventListener('touchstart', () => moveLeft = true);
+            document.getElementById('leftBtn').addEventListener('touchend', () => moveLeft = false);
+            document.getElementById('rightBtn').addEventListener('touchstart', () => moveRight = true);
+            document.getElementById('rightBtn').addEventListener('touchend', () => moveRight = false);
+            document.getElementById('actionBtn').addEventListener('touchstart', collectNearbyItems);
         }
 
         function onKeyDown(event) {
@@ -124,7 +273,7 @@
                 case 'KeyS': moveBackward = true; break;
                 case 'KeyA': moveLeft = true; break;
                 case 'KeyD': moveRight = true; break;
-                case 'ShiftLeft': isRunning = true; break;
+                case 'Space': collectNearbyItems(); break;
             }
         }
 
@@ -134,32 +283,110 @@
                 case 'KeyS': moveBackward = false; break;
                 case 'KeyA': moveLeft = false; break;
                 case 'KeyD': moveRight = false; break;
-                case 'ShiftLeft': isRunning = false; break;
             }
+        }
+
+        function collectNearbyItems() {
+            collectibles.forEach((collectible, index) => {
+                if (player.position.distanceTo(collectible.position) < 3) {
+                    scene.remove(collectible);
+                    collectibles.splice(index, 1);
+                    score += 10;
+                    document.getElementById('scoreValue').textContent = score;
+                }
+            });
         }
 
         function animate() {
             requestAnimationFrame(animate);
 
-            const speed = isRunning ? 0.2 : 0.1;
-            if (moveForward) velocity.z -= speed;
-            if (moveBackward) velocity.z += speed;
-            if (moveLeft) velocity.x -= speed;
-            if (moveRight) velocity.x += speed;
+            const speed = 0.5;
+            const rotationSpeed = 0.03;
 
-            velocity.multiplyScalar(0.9); // Reibung
-            camera.position.add(velocity);
+            if (moveForward) {
+                velocity.x += Math.sin(player.rotation.y) * speed;
+                velocity.z += Math.cos(player.rotation.y) * speed;
+            }
+            if (moveBackward) {
+                velocity.x -= Math.sin(player.rotation.y) * speed;
+                velocity.z -= Math.cos(player.rotation.y) * speed;
+            }
+            if (moveLeft) player.rotation.y += rotationSpeed;
+            if (moveRight) player.rotation.y -= rotationSpeed;
 
-            renderer.render(scene, camera);
-        }
+velocity.multiplyScalar(0.95);
 
-        window.addEventListener('resize', function() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+        // Kollisionserkennung und Bewegung
+        const newPosition = player.position.clone().add(velocity);
+        let collision = false;
+        buildings.forEach(building => {
+            if (detectCollision(newPosition, building)) {
+                collision = true;
+            }
         });
 
-        init();
-    </script>
+        if (!collision) {
+            player.position.add(velocity);
+            camera.position.x = player.position.x - Math.sin(player.rotation.y) * 20;
+            camera.position.z = player.position.z - Math.cos(player.rotation.y) * 20;
+            camera.lookAt(player.position);
+        }
+
+        // NPC-Autos bewegen
+        npcCars.forEach(npcCar => {
+            moveNPCCar(npcCar);
+        });
+
+        // Ampeln aktualisieren
+        updateTrafficLights();
+
+        // Sammelobjekte rotieren lassen
+        collectibles.forEach(collectible => {
+            collectible.rotation.y += 0.02;
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    function moveNPCCar(npcCar) {
+        // Einfache KI-Logik für NPC-Autos
+        npcCar.position.x += (Math.random() - 0.5) * 0.5;
+        npcCar.position.z += (Math.random() - 0.5) * 0.5;
+
+        // Grenzen des Spielfelds beachten
+        npcCar.position.x = Math.max(-500, Math.min(500, npcCar.position.x));
+        npcCar.position.z = Math.max(-500, Math.min(500, npcCar.position.z));
+
+        // Zufällige Drehung
+        npcCar.rotation.y += (Math.random() - 0.5) * 0.1;
+    }
+
+    function updateTrafficLights() {
+        // Einfache Ampellogik: Alle 5 Sekunden umschalten
+        const time = Date.now() / 1000;
+        trafficLights.forEach((trafficLight, index) => {
+            const state = Math.floor(time / 5 + index) % 3;
+            trafficLight.children.slice(2).forEach((light, lightIndex) => {
+                light.material.emissive.setHex(lightIndex === state ? light.material.color.getHex() : 0x000000);
+            });
+        });
+    }
+
+    function detectCollision(position, object) {
+        const boundingBox = new THREE.Box3().setFromObject(object);
+        const playerBox = new THREE.Box3().setFromObject(player);
+        playerBox.min.add(position);
+        playerBox.max.add(position);
+        return boundingBox.intersectsBox(playerBox);
+    }
+
+    window.addEventListener('resize', function() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    init();
+</script>
 </body>
 </html>
